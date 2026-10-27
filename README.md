@@ -1,70 +1,75 @@
-# 文档工作台：OCR、翻译与 Word 导出
+# PDF Translator · 文档识别与翻译工作台
 
-一个本机运行的文档处理工作台。上传 PDF 或图片，调用视觉模型识别文字，提取结构化字段并翻译，最后对照原图复核、导出可编辑 Word。
+将 PDF 和图片转换为可复核、可编辑的 Word 文档。在浏览器中完成文件上传、文字识别、字段提取、翻译与人工校对，适用于证件、证明及其他扫描文档的整理与翻译。
 
-页面采用“左侧选择配置、中间上传与提交、右侧查看任务”的布局。前端为原生 HTML/CSS/JavaScript，无需 Node.js 构建；后端为 FastAPI，任务与结果存储在 SQLite。
+项目采用 FastAPI、SQLite 和原生 JavaScript，可在本机或受控服务器环境运行，无需前端构建、独立数据库或本地 GPU。文字识别与翻译通过用户配置的远程模型 API 完成。
 
-本文依据 **2026-10-27 的实际运行代码和环境**整理。当前正式入口是 **`app_v2.py`**，不是旧版 `app.py`。
+[快速开始](#快速开始) · [模型配置](#模型配置) · [使用方法](#使用方法) · [服务器部署](#服务器部署) · [常见问题](#常见问题) · [版本记录](CHANGELOG.md)
 
-## 最近版本变化
+## 功能
 
-**2026-10-27**：新增 ToAPIs 国内/国际入口自动探测路由，补齐通用字段提取的一次连接重试；保留此前多语言 Word 出件、JSON 解析与诊断修复。
+- **PDF 与图片上传**：支持多文件提交，PDF 自动分页处理。
+- **识别与翻译**：通过视觉模型识别原文，提取结构化字段，再翻译为目标语言。
+- **对照复核**：对照原图检查和修改字段，保存校对结果。
+- **Word 导出**：下载原文或译文 Word，标题、字段标签等固定文字随目标语言变化，支持简体与繁体中文。
+- **任务管理**：查看排队、处理、完成与失败状态，任务及结果保存在本地 SQLite。
+- **故障诊断**：保留失败阶段前已获得的结果，提供连接重试、响应解析与阶段耗时日志。
 
-完整变化、验证范围与已知边界见 [CHANGELOG.md](CHANGELOG.md)。
+> 文档内容会发送至配置的模型服务。处理前请确认该服务符合你的数据使用要求。识别与翻译结果需要人工复核；部分完成的任务仅导出成功页面。
 
-## 需要准备什么
+## 运行要求
 
-| 项目 | 要求 |
+| 组件 | 要求 |
 | --- | --- |
-| Python | 推荐 **3.12**；当前验证环境为 macOS + Python **3.12.13** |
-| 系统工具 | **Poppler**，其中 `pdftoppm` 和 `pdfinfo` 必须在 PATH 中，用于 PDF 分页转图 |
-| Python 依赖 | 安装本项目 `requirements.lock.txt`；不需要自己部署数据库 |
-| 模型服务 | 可访问的 **OpenAI Chat Completions 兼容接口**、自己的 API Key 和可用额度 |
-| OCR 模型 | 必须支持图片输入（`image_url` / Base64 图片） |
-| 提取与翻译模型 | 支持文本输入，并能按提示词稳定返回 JSON；可以与 OCR 使用同一模型 |
-| 磁盘与权限 | 项目目录可写日志；上传、结果、SQLite 目录可写。PDF 转为图片后占用会明显增加 |
-| 浏览器 | 支持 ES Modules、Fetch、localStorage、`<dialog>` 等能力的现代浏览器 |
+| Python | 推荐 3.12 |
+| Poppler | `pdfinfo` 和 `pdftoppm` 可从终端调用，用于 PDF 分页转图 |
+| 模型 API | OpenAI Chat Completions 兼容服务，具备有效密钥和可用额度 |
+| OCR 模型 | 支持 `image_url` / Base64 图片输入 |
+| 提取与翻译模型 | 支持文本输入与 `response_format={"type":"json_object"}` |
+| 浏览器 | 支持 ES Modules、Fetch、localStorage 和 `<dialog>` 的现代浏览器 |
+| 存储 | 配置、日志、数据库、上传及输出目录具备相应读写权限 |
 
-**不需要本地 GPU，不需要安装 Office，不需要 Redis、MySQL 或前端构建工具。** OCR 和翻译由已配置的远端模型服务完成，不是离线识别。Node.js 只用于可选的前端控制器测试。
+不需要安装 Microsoft Office、Redis、MySQL 或 Node.js。Node.js 仅用于可选的前端测试。
 
-## 快速开始：macOS / Linux
+已验证运行平台为 macOS / Python 3.12。Linux、Windows 安装步骤见下文，目标环境仍需完成依赖检查与端到端验证。`requirements.lock.txt` 是依赖版本快照，跨平台安装时需确认相应版本可用。
 
-先克隆仓库（私有仓库需已获授权的 GitHub 账号），或者下载源码 ZIP 后解压：
+## 快速开始
+
+### 1. 获取源码
 
 ```sh
 git clone https://github.com/adlerguo/pdf-translator.git
 cd pdf-translator
 ```
 
-以下命令均在 `pdf-translator` 目录执行。不要复制他人电脑上的 `venv`，应在自己的机器上新建。
+也可下载源码 ZIP 后解压。后续命令均在项目目录执行；受限仓库需使用具有访问权限的 GitHub 账号。
 
-### 1. 安装 Python 与 Poppler
+### 2. 安装系统依赖
 
-先准备 Python 3.12，并确认 `python3 --version` 显示预期版本。
-
-macOS（已安装 Homebrew）：
+**macOS**（使用 Homebrew）：
 
 ```sh
 brew install python@3.12 poppler
 ```
 
-Ubuntu / Debian：
+**Ubuntu / Debian**：
 
 ```sh
 sudo apt update
 sudo apt install poppler-utils
 ```
 
-Linux 的 Python 3.12 和 `venv` 安装方式取决于发行版。若系统提供 `python3.12-venv`，需要一并安装。不要为了本项目替换系统 Python。
+Linux 还需安装 Python 3.12 及对应的 `venv` 组件，具体包名取决于发行版。
 
-确认 PDF 工具可用：
+确认工具可用：
 
 ```sh
-pdftoppm -v
+python3.12 --version
 pdfinfo -v
+pdftoppm -v
 ```
 
-### 2. 创建环境并安装依赖
+### 3. 安装 Python 依赖
 
 ```sh
 python3.12 -m venv venv
@@ -72,56 +77,32 @@ python3.12 -m venv venv
 ./venv/bin/python -m pip install -r requirements.lock.txt
 ```
 
-`requirements.txt` 列出直接依赖，`requirements.lock.txt` 记录当前运行环境的完整版本。旧依赖清单已更新，不再使用之前的 OpenAI 1.54.3 等旧版本。
+`requirements.txt` 列出直接依赖，`requirements.lock.txt` 提供完整依赖版本快照。请在目标机器创建虚拟环境，不要复制其他机器的 `venv`。
 
-> 版本快照来自实际运行环境，不等于已在所有系统上完成全新安装验证；当前已验证平台是 macOS。Linux、Windows 的命令用于移植，仍需在目标机器进行自检和一次实际任务验收。
-
-### 3. 配置模型服务
+### 4. 创建配置
 
 ```sh
 cp config.example.json config.json
 ```
 
-编辑 `config.json`，替换以下内容：
+在 `config.json` 中填写 API 地址、密钥及模型 ID，配置字段见[模型配置](#模型配置)。
 
-| 配置 | 填什么 |
-| --- | --- |
-| `api.base_url` | 提供商的 OpenAI 兼容 API 根地址，按提供商要求填写是否带 `/v1`；不要填网页地址或完整 `/chat/completions` 请求地址 |
-| `api.api_key` | 你自己的密钥 |
-| `models.ocr.name` | 实际可用的视觉模型 ID |
-| `models.translation.name` | 实际可用的字段提取与翻译模型 ID |
-| `models.available[].id` | 与上方默认模型 ID 对应，大小写和后缀需一致 |
-| `models.available[].use_for` | 识别模型包含 `"ocr"`；提取与翻译模型包含 `"translation"` |
-| `queue.max_concurrent_tasks` | 同时处理的文档数，默认 2；额度或限流较紧时设为 1 |
-
-`name` / `id` 是发给 API 的真实模型标识，`display_name` 与目录中的 `name` 只是界面显示文字。若同一个模型兼任两种角色，可在 `available` 中保留一项，设置 `"use_for": ["ocr", "translation"]`。
-
-示例配置使用占位符，不附带可用密钥或承诺可用的模型。示例里的其他结构可以保留，尤其是 `ocr.system_prompt`。
-
-配置修改后需重启服务。当前程序从 **项目目录的 `config.json`** 读取 API 地址和密钥，不会自动读取 `.env`，也不读取 `OPENAI_API_KEY` / `OPENAI_BASE_URL`。
-
-### 4. 自检并启动
+### 5. 检查并启动
 
 ```sh
 ./venv/bin/python check_environment.py
 ./venv/bin/python app_v2.py
 ```
 
-浏览器打开：**http://127.0.0.1:8092**
+打开 **[http://127.0.0.1:8092](http://127.0.0.1:8092)**。
 
-macOS / Linux 也可运行：
+macOS / Linux 也可使用 `./start.sh` 启动。该脚本检查配置与 Poppler，并在缺少虚拟环境时创建环境、安装依赖。按 `Ctrl+C` 停止服务。
 
-```sh
-./start.sh
-```
+首次使用建议上传一张不含敏感信息的小图片，确认识别、翻译、复核和 Word 下载流程完整可用。
 
-`start.sh` 检查配置与 Poppler；没有 venv 时自动创建并安装锁定依赖，已有环境则直接使用。它不会自动打开浏览器。按 `Ctrl+C` 停止服务。
+### Windows
 
-## Windows 安装
-
-1. 安装 Python 3.12，并确认 Python Launcher（`py`）可用。
-2. 安装可用于 Windows 的 Poppler，将含 `pdftoppm.exe`、`pdfinfo.exe` 的目录加入 PATH。打开新 PowerShell，运行 `pdftoppm -v` 与 `pdfinfo -v` 确认可用。
-3. 在项目目录执行：
+安装 Python 3.12 和 Windows 版 Poppler，将含 `pdfinfo.exe`、`pdftoppm.exe` 的目录加入 PATH。重新打开 PowerShell，确认两个命令可用后，在项目目录执行：
 
 ```powershell
 py -3.12 -m venv venv
@@ -130,164 +111,172 @@ py -3.12 -m venv venv
 Copy-Item config.example.json config.json
 ```
 
-编辑配置后执行：
+完成模型配置后启动：
 
 ```powershell
 .\venv\Scripts\python.exe check_environment.py
 .\venv\Scripts\python.exe app_v2.py
 ```
 
-打开同样的本机地址。Windows 不使用 `start.sh` / `restart.sh`；这里直接调用虚拟环境的 Python，无需激活脚本或修改 PowerShell 执行策略。
+访问同一浏览器地址。Windows 直接使用上述 Python 命令，无需运行 Shell 脚本。
 
-## 使用流程
+## 模型配置
 
-1. 选择文字识别模型、字段提取与翻译模型、目标语言。
-2. 点击或拖入 PDF / 图片，可多选。上传与 PDF 转换完成前禁止提交。
-3. 点击“开始处理”。每份文件对应一个任务；服务接收后可以继续准备下一批。
-4. 在右侧查看排队、处理、完成、部分完成、失败或待核对状态。
-5. 点击“查看与复核”，对照原图修改字段并保存；下载原文 Word 或译文 Word。
+配置文件为项目根目录的 `config.json`，完整结构见 [config.example.json](config.example.json)。
 
-当前限制：单文件 **50MB**，单份 PDF **100 页**，单批 **20 份文件**。图片格式包括 PNG、JPG/JPEG、WebP、BMP、TIFF/TIF、GIF；当前图片入口按单页处理，不提供多帧图片拆页。多张图片不会自动合并成一个任务。
+| 字段 | 说明 |
+| --- | --- |
+| `api.base_url` | 服务商提供的 OpenAI 兼容 API 根地址，例如 `https://your-provider.example/v1`；不要填写控制台网页或完整的 `/chat/completions` 地址 |
+| `api.api_key` | 用户自己的 API 密钥 |
+| `models.ocr.name` | 默认视觉模型的真实 ID |
+| `models.translation.name` | 默认字段提取与翻译模型的真实 ID |
+| `models.available[].id` | 可选模型的真实 ID，应包含上述默认模型 |
+| `models.available[].name` | 模型在界面中的显示名称 |
+| `models.available[].use_for` | `"ocr"` 用于识别，`"translation"` 用于字段提取与翻译 |
+| `queue.max_concurrent_tasks` | 同时处理的文档数，默认 2 |
 
-## 环境变量
+一个支持图片和结构化输出的模型可以兼任两种角色，在 `use_for` 中填写 `["ocr", "translation"]`。默认模型的 `name` 是接口 ID，`display_name` 是显示名称；模型 ID 的大小写与后缀应与服务商一致。
 
-API 凭证仍在 `config.json`，下列变量只用于运行参数。示例使用绝对路径；设置后重启生效。
+配置示例中的模型和密钥均为占位符，需自行替换。保留 `ocr.system_prompt` 等其他配置结构即可。程序读取 `config.json`，不会自动读取 `.env`、`OPENAI_API_KEY` 或 `OPENAI_BASE_URL`。修改配置后需重启服务。
 
-| 变量 | 默认值 | 用途 |
-| --- | --- | --- |
-| `PORT` | `8092` | 执行 `python app_v2.py` 时的监听端口 |
-| `OCR_MODEL_READ_TIMEOUT` | `300` 秒，最小 30 秒 | 等待模型响应的读取超时；连接超时 20 秒、写入超时 60 秒 |
-| `OCR_DATA_DIR` | 项目目录 `data/` | SQLite 数据目录 |
-| `OCR_UPLOAD_DIR` | 项目目录 `uploads/` | 原件与分页图片目录 |
-| `OCR_OUTPUT_DIR` | 项目目录 `outputs/` | Word 输出目录 |
-| `OCR_TEMPLATE_DIR` | 见下方说明 | 可选模板目录 |
+### ToAPIs 网络路由
 
-macOS / Linux 示例：
+使用 ToAPIs 官方域名时，共用异步模型客户端自动选择网络入口：
+
+1. 优先探测 `https://toapis.cn/v1`，可达时直接连接，不使用环境代理。
+2. 国内入口不可达时探测 `https://toapis.com/v1`，国际入口可使用环境代理。
+3. 两个入口均不可达时返回连接错误。
+
+适用域名为 `toapis.com`、`api.toapis.com`、`toapis.cn`、`api.toapis.cn`，其他服务沿用原配置地址。探测访问 `/models`，不携带密钥或生成内容；HTTP 200 / 401 表示入口可达。结果缓存 60 秒，模型连接异常后清除缓存，下次调用重新探测。路由记录见 `processing.log`。
+
+入口连通不代表模型权限、额度及生成请求均可用。
+
+## 使用方法
+
+1. 选择 OCR 模型、字段提取与翻译模型、目标语言。
+2. 点击或拖入 PDF / 图片，等待上传和 PDF 转换完成。
+3. 点击“开始处理”，在任务列表查看进度。
+4. 打开“查看与复核”，对照原图检查并保存字段。
+5. 下载原文 Word 或译文 Word。
+
+| 上传项目 | 限制 |
+| --- | --- |
+| 单文件大小 | 50 MB |
+| 单份 PDF 页数 | 100 页 |
+| 单批文件数 | 20 份 |
+| 图片格式 | PNG、JPG/JPEG、WebP、BMP、TIFF/TIF、GIF |
+
+图片入口按单页处理，不拆分多帧图片；多张图片分别创建任务，不自动合并。
+
+### 失败与恢复
+
+- 原文、结构化字段和翻译是独立处理阶段。看到原文代表 OCR 已成功，不代表后续步骤已完成。
+- 类型识别、智能字段提取、通用字段提取及字段翻译遇到连接错误时，等待 2 秒后最多重试一次。读取超时、HTTP 权限/额度错误和 JSON 解析错误不触发该连接重试；OCR 未增加此自动重试。
+- 翻译失败且字段已保存时，可选择“仅重试翻译”，复用已有字段。重新调用模型可能产生费用。
+- 部分完成仅导出成功页面，请逐页核对遗漏。
+- 服务重启后，处理中任务标为待核对，不自动重新发送；尚未执行的排队任务可恢复。隐藏任务可以恢复显示，隐藏不等于取消或删除。
+
+## 服务器部署
+
+完成安装与配置后，以单进程运行：
 
 ```sh
-export PORT=8095
-export OCR_MODEL_READ_TIMEOUT=600
-./venv/bin/python app_v2.py
+./venv/bin/python -m uvicorn app_v2:app --host 127.0.0.1 --port 8092 --workers 1
 ```
 
-PowerShell 示例：
+**仅运行一个 worker、一个服务实例。** 任务调度在进程内完成，多进程共享 SQLite 可能导致重复执行。生产运行不要使用 `--reload`。
 
-```powershell
-$env:PORT="8095"
-$env:OCR_MODEL_READ_TIMEOUT="600"
-.\venv\Scripts\python.exe app_v2.py
-```
+默认仅允许本机访问。项目未提供登录、用户隔离或 API 访问控制；远程访问应使用 SSH 转发，或配置带身份认证和 HTTPS 的反向代理。共享部署前需明确密钥与文档数据的访问范围。
 
-模型 SDK 自动重试已关闭。延长读取超时可以容忍较慢响应，不能解决无效密钥、额度不足、限流或上游宕机。
+进程托管、容器注意事项和迁移步骤见 [DEPLOYMENT.md](DEPLOYMENT.md)。
 
-## 数据、恢复与迁移
+### 运行参数
 
-| 位置 | 内容 | 是否应公开分享 |
+| 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `config.json` | API 地址、密钥与模型配置 | 否，分享 `config.example.json` |
-| `data/tasks.db` | 任务、参数、原文与译文结果 | 否 |
-| `uploads/` | 原始文件、分页图片与素材清单 | 否 |
-| `outputs/` | Word 结果 | 否 |
-| `processing.log` | 新增的处理阶段、耗时与错误类型 | 排查时按需提供 |
-| `backups/`、其他旧日志 | 可能含历史业务材料或旧代码 | 否 |
+| `PORT` | `8092` | 使用 `python app_v2.py` 启动时的端口；Uvicorn 命令使用 `--port` |
+| `OCR_MODEL_READ_TIMEOUT` | `300` 秒 | 模型读取超时，最小 30 秒；连接超时 20 秒、写入超时 60 秒 |
+| `OCR_DATA_DIR` | `data/` | SQLite 数据目录 |
+| `OCR_UPLOAD_DIR` | `uploads/` | 原件与分页图片目录 |
+| `OCR_OUTPUT_DIR` | `outputs/` | Word 输出目录 |
+| `OCR_TEMPLATE_DIR` | `templates/` 或兼容目录 | 可选模板位置，详见下文 |
 
-- 刷新页面后可恢复当前浏览器的素材草稿；任务和已保存复核在服务端 SQLite 中。
-- 关闭浏览器不影响运行中的服务。服务停止会停止本地处理；处理中任务重启后标为“待核对”，不自动重发模型请求。尚未开始的排队任务可以继续。
-- 翻译失败但字段已保存时，可手动点“仅重试翻译”，不用重跑 OCR；该操作仍可能产生模型费用。
-- 部分完成仅导出成功页面。请检查失败页，不要将文件已下载视为所有内容已完成。
-- 隐藏任务不是取消或删除，可以恢复显示。
+默认数据目录相对于项目目录。自定义目录建议使用绝对路径，并确保服务用户具有读写权限。例如：
 
-**备份前先停止服务**，一并备份数据库、uploads、outputs 和自己的配置。不要只复制数据库后就删除原件。
+```sh
+PORT=8095 OCR_MODEL_READ_TIMEOUT=600 ./venv/bin/python app_v2.py
+```
 
-现有任务在配置中保存了分页图片的**绝对路径**。将旧数据迁往不同机器或不同目录，不是仅复制 `data/` 就能保证续跑；新用户通常应从空数据目录开始。需要迁移历史时，应保留原目录映射，或由维护者校正任务中的文件路径后再运行。
+调整文档并发不会等比例提升吞吐量，还受全局页面并发与模型服务限制影响。延长超时也不能解决额度不足、限流或上游故障。
 
-## Word 模板是否必需
+## 数据与备份
 
-不必需。当前主流程使用 `document_formatter.py` 导出标准 Word，不依赖原作者电脑上的模板文件。
+| 位置 | 内容 |
+| --- | --- |
+| `config.json` | API 密钥、地址与模型配置 |
+| `data/tasks.db` | 任务参数、原文、字段与译文结果 |
+| `uploads/` | 上传原件、分页图片和素材清单 |
+| `outputs/` | 导出 Word |
+| `processing.log` | 阶段耗时、路由、重试及响应诊断信息 |
 
-模板目录优先使用 `OCR_TEMPLATE_DIR`；未设置时，若项目上一级存在 `模板/` 则兼容使用该目录，否则使用项目内 `templates/`。保留的模板匹配接口扫描第一层文件名包含“公证书”或“附件”的 `.docx`。仅放入模板不等于主界面会自动按该模板出件。
+这些运行文件不应提交到仓库。JSON 解析失败时，系统临时目录还会生成 `json_fail_*.txt`，包含模型原始响应与诊断信息，可能含文档内容；分享日志前应检查并脱敏。
 
-## 自检与测试
+备份时先停止服务，再一并保存配置、数据库、上传及输出目录。历史任务包含分页图片的绝对路径，跨机器迁移时需保留目录映射或校正路径，仅复制数据库无法保证恢复。
 
-环境检查不调用模型、不打印密钥：
+### Word 模板
+
+标准 Word 导出不要求额外模板。可选模板目录由 `OCR_TEMPLATE_DIR` 指定；未设置时，优先兼容项目上一级的 `模板/`，否则使用项目内 `templates/`。
+
+模板匹配接口扫描第一层名称含“公证书”或“附件”的 `.docx` 文件；添加模板不会自动改变主界面的标准出件流程。
+
+## 常见问题
+
+| 问题 | 处理方式 |
+| --- | --- |
+| 缺少 `config.json` | 复制 `config.example.json`，填写服务地址、密钥和模型 ID |
+| `ModuleNotFoundError` | 使用虚拟环境 Python，并在同一环境安装依赖 |
+| 无法获取 PDF 页数 | 检查 `pdfinfo`、`pdftoppm` 是否在服务进程的 PATH 中；修改 PATH 后重新打开终端 |
+| `401` / `403` | 检查密钥、API 地址及账号权限 |
+| 模型不存在 / `404` | 核对真实模型 ID 及接口根地址 |
+| `429` | 检查额度与限流，降低 `queue.max_concurrent_tasks` 后重启 |
+| `Connection error` | 查看失败阶段和路由日志，确认 API 与代理可达；ToAPIs 会按上述规则探测入口 |
+| `Request timed out` | 查看阶段耗时，按需调整读取超时；字段已保存时可仅重试翻译 |
+| JSON 解析失败 | 查看任务提供的诊断文件与 `finish_reason`；模型可能返回不完整或不符合格式的内容 |
+| Word 缺页 | 检查任务是否部分完成，逐页核对失败原因 |
+| 其他电脑无法打开页面 | `127.0.0.1` 仅代表本机；参阅服务器部署说明 |
+
+结构化输出使用 JSON 模式，但仍可能因长度限制等原因返回不完整内容。程序保留解析检查与结束原因诊断，不将补齐括号后的残缺响应视为成功结果。
+
+## 开发与测试
 
 ```sh
 ./venv/bin/python check_environment.py
-```
-
-隔离测试使用临时文件和模拟模型，不运行真实付费识别：
-
-```sh
 ./venv/bin/python -m unittest discover -s tests -v
 node tests/test_frontend.cjs
 ```
 
-Python 测试需要 HTTP 客户端；锁定环境包含 `httpx2`，测试也兼容已安装的 `httpx`。Node.js 不参与启动和实际文档处理。
-
-自检和模拟测试都不能证明模型当前有额度或可用。首次正式验收建议用一张不含敏感信息的小图片，确认识别、翻译、复核、Word 下载完整跑通，再处理业务文件。
-
-## 常见问题
-
-| 问题 | 排查方式 |
-| --- | --- |
-| 缺少 `config.json` | 复制配置示例，填入自己的地址、密钥、模型 ID |
-| `ModuleNotFoundError` | 确认使用的是 venv 里的 Python，并在同一环境安装依赖 |
-| `Unable to get page count` / 找不到 Poppler | 确认 `pdfinfo`、`pdftoppm` 都在运行服务的进程 PATH 中；Windows 修改 PATH 后重新打开终端 |
-| `401` / `403` | 核对密钥、提供商地址、账号权限 |
-| 模型不存在 / `404` | 核对真实模型 ID 与 API 根地址；相似显示名称不代表同一模型 |
-| `429` | 核对额度与并发限制，将文档并发设为 1 后再试 |
-| `Request timed out` | 查看任务逐页错误与 `processing.log`；可适度增加读取超时。翻译阶段失败时优先仅重试翻译 |
-| 页面连不上 | 检查终端是否仍在运行、端口是否被占用；默认地址是 HTTP 而不是 HTTPS |
-| 其他电脑访问不了 | 默认仅监听 `127.0.0.1`，这是本机地址；远程部署见 DEPLOYMENT.md |
-| Word 没包含全部页 | 查看是否为部分完成或存在没有结构化字段的页面，回到复核界面核对 |
-
-## 项目结构
+环境检查不调用模型、不输出密钥。自动化测试使用模拟模型和临时任务数据；前端测试需要 Node.js。自检和测试通过不代表外部模型当前具备额度或服务可用性。
 
 ```text
 pdf-translator/
-├── app_v2.py                 # 当前服务入口
-├── model_client.py           # 异步模型客户端与超时
-├── document_language.py      # 语言代码、标题、日期与中文标签
-├── multi_page_processor.py   # 多页识别与处理
-├── intelligent_extractor.py  # 字段提取与翻译
-├── task_queue.py             # 本地任务调度与恢复
-├── task_storage.py           # SQLite 持久化
-├── document_formatter.py     # 标准 Word 排版
-├── template_manager.py       # 可选模板兼容功能
-├── config.example.json       # 不含真实密钥的配置示例
-├── requirements.txt          # 直接依赖
-├── requirements.lock.txt     # 当前运行环境版本快照
-├── check_environment.py      # 只读环境自检
-├── start.sh / restart.sh     # macOS / Linux 启动辅助
-├── static/workbench.*        # 当前前端，无构建步骤
-├── templates/                # 可选模板
-└── tests/                    # 隔离测试
+├── app_v2.py                 # FastAPI 服务入口
+├── model_client.py           # 异步客户端、超时与网络路由
+├── multi_page_processor.py   # 多页文档处理
+├── intelligent_extractor.py  # 类型判断、字段提取与翻译
+├── json_parser.py            # JSON 解析与响应诊断
+├── document_language.py      # 语言代码与本地化文字
+├── document_formatter.py     # Word 排版与导出
+├── task_queue.py             # 任务调度与恢复
+├── task_storage.py           # SQLite 存储
+├── config.example.json       # 配置示例
+├── static/workbench.*        # 浏览器工作台
+└── tests/                    # 自动化测试
 ```
 
-源码包不需要附带 `venv`、真实配置、数据库、上传文件、导出结果、旧日志或旧前端版本。
+项目不提供 `python app_v2.py process <PDF>` 处理子命令，文档处理通过工作台或 HTTP API 发起。
 
-## 源码与数据边界
+使用 `python3 build_source_package.py` 可生成按源码允许清单打包的 ZIP，排除密钥、数据库、原件、结果和虚拟环境。发布记录见 [CHANGELOG.md](CHANGELOG.md)。
 
-本仓库仅包含正式入口 `app_v2.py`、当前处理模块、工作台前端、依赖、配置示例、运行文档和隔离测试。不包含旧版 `app.py`、真实 API 密钥、业务材料、数据库、venv 或开发电脑旧 Git 历史。
+## 许可证
 
-使用自己的 config.json，不要提交该文件。项目尚未指定开源许可证。
-
-## 运行与诊断补充
-
-导出语言：标题、模板文字、字段标签、页码和日期随任务目标语言变化；简体与繁体中文分别处理。旧中文任务中强制生成的英文标签，会优先使用原字段语义名称进行修复；不重新调用模型。中文简繁转换使用 OpenCC。
-
-针对连接断开：证件类型识别、智能字段提取、通用字段提取、字段翻译四个调用点在 APIConnectionError / RemoteProtocolError 时等待 2 秒并最多自动重试一次；第二次失败即结束。读取超时、HTTP 余额/权限错误和 JSON 格式错误不触发该重试。SDK 自身仍不自动重试，OCR 未新增网络自动重试。
-
-JSON 响应通过 json_parser.py 统一解析：去除代码围栏及字符串之外的注释，将字符串内未转义控制字符转为合法 JSON 转义，保留原始字段值。无法解析时在系统临时目录写入仅当前用户可读的 json_fail_*.txt，记录原始响应与清理后响应，并在任务错误中显示路径；诊断文件可能含文档字段，排查结束后按需删除。
-
-JSON 输出额度：智能字段提取、通用字段提取和字段翻译的 max_tokens 为 8192；证件类型识别为 1000，OCR 为 4096。解析失败若疑似返回中断，会提示结合结束原因检查；processing.log 和失败诊断文件记录 finish_reason、输出额度与接口提供的 token 用量。只有 finish_reason=length 才明确报告达到输出长度限制；不会通过补引号或括号将半截结果标成成功。
-
-JSON 模式：证件类型识别、智能字段提取、字段翻译、通用字段提取四个调用点传入 response_format={"type":"json_object"}。当前 ToAPIs 网关与 gemini-3.8-flash 已通过一次最小合成请求，证明该组合接受参数并返回预期 JSON；其他模型未逐一在线验证。JSON 模式不能保证输出达到长度上限时仍完整，也不保证字段齐全，因此保留 8192 输出额度、解析容错与 finish_reason/token 诊断。不要将这一模式理解为自动截断到最后一个完整字段。
-
-本项目没有 `python app_v2.py process <PDF>` 这样的处理子命令；验证业务文件请启动服务后从浏览器工作台上传，或调用已有 HTTP API。
-
-### ToAPIs 自动网络路由
-
-共用异步模型客户端识别 `toapis.com`、`api.toapis.com`、`toapis.cn`、`api.toapis.cn` 官方域名。优先探测国内入口 `https://toapis.cn/v1` 并直接连接，不使用环境代理；国内不可达时探测国际入口 `https://toapis.com/v1`，可使用环境代理。其他服务保持原配置地址。
-
-探测只访问 `/models`，不携带密钥或生成内容；HTTP 200/401 表示入口可达。结果缓存 60 秒，模型连接异常后清除缓存并在下次调用重新探测。两个入口均不可达则报告连接错误。入口可达不代表模型生成必定成功，具体路由见 `processing.log`。
+仓库尚未指定开源许可证。
