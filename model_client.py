@@ -1,4 +1,4 @@
-"""Shared bounded model timeouts; never automatically replay billable calls."""
+"""Shared bounded model timeouts; SDK retries disabled (extractor has its own one-retry connection policy)."""
 import os
 import openai
 

@@ -51,4 +51,4 @@
 python3 build_source_package.py
 ```
 
-新使用者解压后，从 config.example.json 创建自己的配置并按 README 安装。本 GitHub 仓库从干净源码目录初始化，不带开发电脑上的旧 Git 历史；分享后续修改时仍应排除私有配置和业务材料。
+新使用者解压后，从 config.example.json 创建自己的配置并按 README 安装。本 GitHub 仓库由干净源码目录初始化，不含开发电脑上的旧 Git 历史；分享后续修改时仍需排除真实配置和业务数据。

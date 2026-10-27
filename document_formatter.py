@@ -7,10 +7,12 @@
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from datetime import datetime
+import sys
 from docx import Document
 from docx.shared import Pt, RGBColor, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
+from document_language import normalize_language, chinese_text, chinese_field_label, document_title, document_date
 
 
 # 多语言模板配置
@@ -90,6 +92,28 @@ LANGUAGE_TEMPLATES = {
 }
 
 
+# Keep every accepted language explicit: no Chinese or other UI selection may
+# fall through to the English template.
+LANGUAGE_TEMPLATES['zh-CN'] = LANGUAGE_TEMPLATES['zh']
+LANGUAGE_TEMPLATES['zh-TW'] = {
+    'translation_label':'譯文', 'certificate_prefix':'編號',
+    'certification_text':'茲證明所附文件為原件之準確譯文。',
+    'notary_label':'公證員', 'page_label':'頁', 'date_format':'%Y年%m月%d日',
+    'font':'PMingLiU'}
+for code, values in {
+    'it': ('Traduzione','N.','Si certifica che il documento allegato è una traduzione fedele dell’originale.','Notaio','Pagina'),
+    'pt': ('Tradução','N.º','Certifica-se que o documento anexo é uma tradução fiel do original.','Notário','Página'),
+    'ar': ('الترجمة','رقم','نشهد بأن المستند المرفق ترجمة دقيقة للأصل.','كاتب العدل','صفحة'),
+    'th': ('คำแปล','เลขที่','ขอรับรองว่าเอกสารแนบเป็นคำแปลที่ถูกต้องของต้นฉบับ','ผู้รับรองเอกสาร','หน้า'),
+    'vi': ('Bản dịch','Số','Chứng nhận tài liệu đính kèm là bản dịch chính xác của bản gốc.','Công chứng viên','Trang'),
+    'id': ('Terjemahan','No.','Dengan ini dinyatakan bahwa dokumen terlampir merupakan terjemahan yang akurat dari aslinya.','Notaris','Halaman'),
+    'hi': ('अनुवाद','संख्या','प्रमाणित किया जाता है कि संलग्न दस्तावेज़ मूल का सटीक अनुवाद है।','नोटरी','पृष्ठ'),
+}.items():
+    LANGUAGE_TEMPLATES[code] = dict(zip(
+        ('translation_label','certificate_prefix','certification_text','notary_label','page_label'), values),
+        date_format='%Y-%m-%d', font='Times New Roman')
+
+
 class DocumentFormatter:
     """正式文档格式化器（支持多语言）"""
 
@@ -100,8 +124,10 @@ class DocumentFormatter:
         Args:
             target_lang: 目标语言代码 (en, ko, ja, zh, es, fr, de, ru)
         """
-        self.target_lang = target_lang
-        self.template = LANGUAGE_TEMPLATES.get(target_lang, LANGUAGE_TEMPLATES["en"])
+        self.target_lang = normalize_language(target_lang)
+        self.template = dict(LANGUAGE_TEMPLATES[self.target_lang])
+        if sys.platform == 'darwin' and self.target_lang.startswith('zh-'):
+            self.template['font'] = 'Songti TC' if self.target_lang == 'zh-TW' else 'Songti SC'
 
     def create_formal_document(
         self,
@@ -139,7 +165,7 @@ class DocumentFormatter:
         doc.add_paragraph()
 
         # 4. 添加文档标题（居中、全大写、加粗）
-        self._add_document_title(doc, doc_type_en)
+        self._add_document_title(doc, document_title(doc_type_cn, self.target_lang) if self.target_lang.startswith("zh-") else (doc_type_en or document_title(None, self.target_lang)))
 
         # 5. 添加证书编号（如果有）
         if certificate_number:
@@ -191,6 +217,13 @@ class DocumentFormatter:
 
         # 中文/日文/韩文字体也使用目标语言字体
         style.element.rPr.rFonts.set(qn('w:eastAsia'), self.template["font"])
+        from docx.oxml import OxmlElement
+        lang = style.element.rPr.find(qn('w:lang'))
+        if lang is None:
+            lang = OxmlElement('w:lang')
+            style.element.rPr.append(lang)
+        lang.set(qn('w:val'), self.target_lang)
+        lang.set(qn('w:eastAsia'), self.target_lang)
 
         # 段落格式
         pf = style.paragraph_format
@@ -222,6 +255,7 @@ class DocumentFormatter:
         居中，全大写，14磅加粗，黑色
         """
         p = doc.add_paragraph()
+        title = document_title(title, self.target_lang) if self.target_lang.startswith("zh-") else title
         run = p.add_run(title.upper())
         run.font.name = self.template["font"]
         run.font.size = Pt(14)
@@ -281,12 +315,16 @@ class DocumentFormatter:
 
             field_type = field_data.get('field_type', field_name).lower()
             translated_value = translations.get(field_name, field_data['value'])
+            if self.target_lang.startswith("zh-"):
+                translated_value = chinese_text(translated_value, self.target_lang)
 
             if not translated_value or str(translated_value).strip() == '':
                 continue
 
             # 获取翻译后的字段标签
             field_label = translations.get(f"{field_name}_label", field_data.get('field_type', field_name))
+            if self.target_lang.startswith("zh-"):
+                field_label = chinese_field_label(field_name, field_data, field_label, self.target_lang)
 
             field_info = {
                 'name': field_name,
@@ -319,8 +357,8 @@ class DocumentFormatter:
             p = doc.add_paragraph()
             parts = []
             for field in field_groups['identity']:
-                parts.append(f"{field['label']}: {field['value']}")
-            text = "; ".join(parts) + "."
+                parts.append(f"{field['label']}{'：' if self.target_lang.startswith('zh-') else ': '}{field['value']}")
+            text = ("；".join(parts) + "。") if self.target_lang.startswith("zh-") else "; ".join(parts) + "."
             run = p.add_run(text)
             run.font.name = self.template["font"]
             run.font.size = Pt(14)
@@ -332,8 +370,8 @@ class DocumentFormatter:
             p = doc.add_paragraph()
             parts = []
             for field in field_groups['document']:
-                parts.append(f"{field['label']}: {field['value']}")
-            text = "; ".join(parts) + "."
+                parts.append(f"{field['label']}{'：' if self.target_lang.startswith('zh-') else ': '}{field['value']}")
+            text = ("；".join(parts) + "。") if self.target_lang.startswith("zh-") else "; ".join(parts) + "."
             run = p.add_run(text)
             run.font.name = self.template["font"]
             run.font.size = Pt(14)
@@ -345,8 +383,8 @@ class DocumentFormatter:
             p = doc.add_paragraph()
             parts = []
             for field in field_groups['address']:
-                parts.append(f"{field['label']}: {field['value']}")
-            text = "; ".join(parts) + "."
+                parts.append(f"{field['label']}{'：' if self.target_lang.startswith('zh-') else ': '}{field['value']}")
+            text = ("；".join(parts) + "。") if self.target_lang.startswith("zh-") else "; ".join(parts) + "."
             run = p.add_run(text)
             run.font.name = self.template["font"]
             run.font.size = Pt(14)
@@ -358,8 +396,8 @@ class DocumentFormatter:
             p = doc.add_paragraph()
             parts = []
             for field in field_groups['other']:
-                parts.append(f"{field['label']}: {field['value']}")
-            text = "; ".join(parts) + "."
+                parts.append(f"{field['label']}{'：' if self.target_lang.startswith('zh-') else ': '}{field['value']}")
+            text = ("；".join(parts) + "。") if self.target_lang.startswith("zh-") else "; ".join(parts) + "."
             run = p.add_run(text)
             run.font.name = self.template["font"]
             run.font.size = Pt(14)
@@ -415,7 +453,7 @@ class DocumentFormatter:
             p.paragraph_format.left_indent = left_indent
 
         # 日期 - 使用多语言格式
-        current_date = datetime.now().strftime(self.template["date_format"])
+        current_date = document_date(self.target_lang)
         p = doc.add_paragraph()
         run = p.add_run(current_date)
         run.font.name = self.template["font"]
@@ -461,7 +499,7 @@ class DocumentFormatter:
                 doc.add_paragraph()  # 空行
 
                 # 添加文档标题
-                title = f"{doc_type_en}" if doc_type_en else "DOCUMENT"
+                title = document_title(doc_type_cn, self.target_lang) if self.target_lang.startswith("zh-") else (doc_type_en or document_title(None, self.target_lang))
                 self._add_document_title(doc, title)
                 doc.add_paragraph()  # 空行
 
@@ -469,7 +507,7 @@ class DocumentFormatter:
             if page_idx > 1:
                 # 第2页及以后：添加页码标识（多语言）
                 p = doc.add_paragraph()
-                run = p.add_run(f"({self.template['page_label']} {page_idx})")
+                run = p.add_run(f"（第 {page_idx} 頁）" if self.target_lang == "zh-TW" else f"（第 {page_idx} 页）" if self.target_lang == "zh-CN" else f"({self.template['page_label']} {page_idx})")
                 run.font.name = self.template["font"]
                 run.font.size = Pt(14)
                 run.font.color.rgb = RGBColor(0, 0, 0)

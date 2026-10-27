@@ -3,10 +3,26 @@
 使用 LLM 动态提取字段，不依赖固定字段列表
 """
 import json
+import asyncio
+import importlib
+import logging
+import time
 from typing import Dict, List, Any
 from pathlib import Path
 import openai
 from model_client import create_async_client
+from document_language import normalize_language, LANGUAGE_NAMES
+from json_parser import parse_json_safe, log_response_metadata
+
+
+logger = logging.getLogger('ocr.processing')
+_connection_errors = [openai.APIConnectionError]
+for _module_name in ('httpx', 'httpx2'):
+    try:
+        _connection_errors.append(importlib.import_module(_module_name).RemoteProtocolError)
+    except ImportError:
+        pass
+CONNECTION_ERRORS = tuple(_connection_errors)
 
 
 class IntelligentExtractor:
@@ -14,6 +30,23 @@ class IntelligentExtractor:
 
     def __init__(self, api_key: str, base_url: str):
         self.client = create_async_client(api_key, base_url)
+
+    async def _call_with_retry(self, method_name, api_call_func, *, model=None, field_count=None):
+        """Retry connection failures once; SDK retries remain disabled."""
+        started = time.monotonic()
+        try:
+            return await api_call_func()
+        except CONNECTION_ERRORS as exc:
+            # Timeouts are a subclass of APIConnectionError, but this change is
+            # specifically for disconnected connections, not slow responses.
+            if isinstance(exc, openai.APITimeoutError):
+                raise
+            logger.warning(
+                '连接断开 | 方法: %s | 模型: %s | 已耗时: %.2fs | 字段数: %s | 异常: %s | 重试 1/1，等待 2 秒',
+                method_name, model or 'unknown', time.monotonic() - started,
+                field_count if field_count is not None else '不适用', type(exc).__name__)
+            await asyncio.sleep(2)
+            return await api_call_func()
 
     async def detect_document_type(self, ocr_text: str, model: str = "gemini-3.8-flash") -> Dict[str, Any]:
         """
@@ -52,33 +85,34 @@ OCR 文本：
 {{
     "type": "证件类型英文代码",
     "type_cn": "证件类型中文名称",
-    "confidence": 0.0-1.0之间的置信度,
+    "confidence": 0.95,
     "features": ["关键特征1", "关键特征2"],
     "reason": "判断理由"
 }}
 
-只返回 JSON，不要其他内容。"""
+只返回合法 JSON，不要注释或其他内容；字符串中的换行和制表符必须按 JSON 规则转义。"""
 
         try:
-            response = await self.client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "你是专业的证件识别专家，擅长分析文档类型。"},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.1,
-                max_tokens=1000
+            response = await self._call_with_retry(
+                "detect_document_type",
+                lambda: self.client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "你是专业的证件识别专家，擅长分析文档类型。"},
+                        {"role": "user", "content": prompt}
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.1,
+                    max_tokens=1000
+                ), model=model, field_count=None
             )
 
-            result_text = response.choices[0].message.content.strip()
-            # 提取 JSON（可能被包裹在 ```json ``` 中）
-            if "```json" in result_text:
-                result_text = result_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in result_text:
-                result_text = result_text.split("```")[1].split("```")[0].strip()
+            metadata = log_response_metadata(response, "detect_document_type", model=model, max_tokens=1000)
+            result_text = response.choices[0].message.content
+            return parse_json_safe(result_text, "detect_document_type", response_metadata=metadata)
 
-            return json.loads(result_text)
-
+        except CONNECTION_ERRORS:
+            raise
         except Exception as e:
             print(f"证件类型识别失败: {e}")
             return {
@@ -139,8 +173,8 @@ OCR 文本：
         "字段英文名": {{
             "value": "字段值",
             "field_type": "字段类型（中文）",
-            "confidence": 0.0-1.0,
-            "is_handwritten": true/false,
+            "confidence": 0.95,
+            "is_handwritten": false,
             "location": "字段在文档中的位置描述"
         }}
     }},
@@ -153,36 +187,37 @@ OCR 文本：
     ],
     "seals": ["印章文字1", "印章文字2"],
     "dates": ["2021-07-30"],
-    "handwritten_fields": ["地址", "备注"]  // 手写字段列表
+    "handwritten_fields": ["地址", "备注"]
 }}
 
-只返回 JSON，不要其他内容。"""
+只返回合法 JSON，不要注释或其他内容；字符串中的换行和制表符必须按 JSON 规则转义。"""
 
         try:
-            response = await self.client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "你是专业的证件信息提取专家，擅长从 OCR 文本中提取结构化信息。"},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.1,
-                max_tokens=4096
+            response = await self._call_with_retry(
+                "extract_fields_intelligently",
+                lambda: self.client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "你是专业的证件信息提取专家，擅长从 OCR 文本中提取结构化信息。"},
+                        {"role": "user", "content": prompt}
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.1,
+                    max_tokens=8192
+                ), model=model, field_count=None
             )
 
-            result_text = response.choices[0].message.content.strip()
-            # 提取 JSON
-            if "```json" in result_text:
-                result_text = result_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in result_text:
-                result_text = result_text.split("```")[1].split("```")[0].strip()
-
-            extracted_data = json.loads(result_text)
+            metadata = log_response_metadata(response, "extract_fields", model=model, max_tokens=8192)
+            result_text = response.choices[0].message.content
+            extracted_data = parse_json_safe(result_text, "extract_fields", response_metadata=metadata)
 
             # 标记需要人工复核的字段
             extracted_data["review_required"] = self._mark_for_review(extracted_data)
 
             return extracted_data
 
+        except CONNECTION_ERRORS:
+            raise
         except Exception as e:
             print(f"字段提取失败: {e}")
             return {
@@ -261,8 +296,8 @@ OCR 文本：
             },
         }
 
-        # 默认返回英文指南
-        return guides.get(target_lang, guides['en'])
+        target_lang = normalize_language(target_lang)
+        return guides.get(target_lang, {'lang_name': LANGUAGE_NAMES[target_lang], 'rules': '姓名、地址、日期和专业术语遵循目标语言习惯；字段标签与字段值均使用目标语言，保留事实、数字与编号。'})
 
     async def translate_fields(
         self,
@@ -293,11 +328,13 @@ OCR 文本：
                 if "value" in field_data:
                     to_translate_values[field_name] = field_data["value"]
                 # 字段名称（field_type）
-                if "field_type" in field_data:
-                    field_labels[field_name] = field_data["field_type"]
+                label = field_data.get("field_type", field_name)
+                if str(label).lower() in {"string", "date", "number", "boolean", "text", "integer", "float"}:
+                    label = field_name
+                field_labels[field_name] = label
 
         if not to_translate_values:
-            raise RuntimeError(f"翻译失败：{e}") from e
+            return {}
 
         # 根据目标语言生成翻译指南
         lang_guide = self._get_translation_guide(target_lang)
@@ -310,7 +347,7 @@ OCR 文本：
 字段值（需要翻译）：
 {json.dumps(to_translate_values, ensure_ascii=False, indent=2)}
 
-字段名称（需要翻译成英文标签）：
+字段名称（必须翻译成{lang_guide['lang_name']}标签，与字段值使用同一目标语言）：
 {json.dumps(field_labels, ensure_ascii=False, indent=2)}
 
 返回 JSON 格式：
@@ -319,34 +356,33 @@ OCR 文本：
         "field_name": "translated value in {lang_guide['lang_name']}"
     }},
     "labels": {{
-        "field_name": "English Field Label"
+        "field_name": "字段名称的{lang_guide['lang_name']}翻译"
     }}
 }}
 
 要求：
 1. values 中是字段值的翻译（翻译成目标语言）
-2. labels 中是字段名称的英文翻译（统一用英文）
-3. 只返回 JSON，不要其他内容"""
+2. labels 中是字段名称的{lang_guide['lang_name']}翻译，禁止统一改用英文（除非目标语言本身就是英文）
+3. 只返回合法 JSON，不要注释或其他内容；字符串中的换行和制表符必须按 JSON 规则转义。"""
 
         try:
-            response = await self.client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "你是专业的翻译助手，擅长证件文档的翻译。"},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3,
-                max_tokens=4096
+            response = await self._call_with_retry(
+                "translate_fields",
+                lambda: self.client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "你是专业的翻译助手，擅长证件文档的翻译。"},
+                        {"role": "user", "content": prompt}
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.3,
+                    max_tokens=8192
+                ), model=model, field_count=len(to_translate_values)
             )
 
-            result_text = response.choices[0].message.content.strip()
-            # 提取 JSON
-            if "```json" in result_text:
-                result_text = result_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in result_text:
-                result_text = result_text.split("```")[1].split("```")[0].strip()
-
-            result = json.loads(result_text)
+            metadata = log_response_metadata(response, "translate_fields", model=model, max_tokens=8192)
+            result_text = response.choices[0].message.content
+            result = parse_json_safe(result_text, "translate_fields", response_metadata=metadata)
 
             # 合并字段值和字段标签翻译
             translations = result.get("values", {})

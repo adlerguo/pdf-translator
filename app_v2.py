@@ -273,7 +273,7 @@ async def ocr_image(image_path: Path, model: str) -> str:
 async def startup_event():
     """应用启动时初始化任务队列"""
     await task_queue.start()
-    processing_logger.info("service_started model_read_timeout=%ss automatic_retries=0", os.getenv("OCR_MODEL_READ_TIMEOUT", "300"))
+    processing_logger.info("service_started model_read_timeout=%ss sdk_retries=0 extractor_connection_retries=1", os.getenv("OCR_MODEL_READ_TIMEOUT", "300"))
     print("✅ 任务队列系统已启动")
 
 

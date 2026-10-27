@@ -17,6 +17,8 @@ logger = logging.getLogger("ocr.processing")
 
 from intelligent_extractor import IntelligentExtractor
 from document_formatter import DocumentFormatter
+from document_language import document_title
+from json_parser import parse_json_safe, log_response_metadata
 
 
 class MultiPageProcessor:
@@ -241,7 +243,7 @@ OCR文本:
         "字段名": {{
             "value": "字段值",
             "field_type": "字段类型",
-            "confidence": 0.0-1.0
+            "confidence": 0.95
         }}
     }},
     "tables": [],
@@ -249,7 +251,7 @@ OCR文本:
     "dates": []
 }}
 
-只返回JSON,不要其他内容。"""
+只返回合法 JSON，不要注释或其他内容；字符串中的换行和制表符必须按 JSON 规则转义。"""
 
         try:
             response = await self.client.chat.completions.create(
@@ -258,18 +260,14 @@ OCR文本:
                     {"role": "system", "content": "你是专业的信息提取专家。"},
                     {"role": "user", "content": prompt}
                 ],
+                response_format={"type": "json_object"},
                 temperature=0.1,
-                max_tokens=4096
+                max_tokens=8192
             )
 
-            result_text = response.choices[0].message.content.strip()
-            if "```json" in result_text:
-                result_text = result_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in result_text:
-                result_text = result_text.split("```")[1].split("```")[0].strip()
-
-            import json
-            return json.loads(result_text)
+            metadata = log_response_metadata(response, "extract_fields_generic", model=model, max_tokens=8192)
+            result_text = response.choices[0].message.content
+            return parse_json_safe(result_text, "extract_fields_generic", response_metadata=metadata)
 
         except Exception as e:
             print(f"字段提取失败: {e}")
@@ -322,103 +320,4 @@ OCR文本:
         Returns:
             翻译后的文档类型
         """
-        # 多语言文档类型映射
-        type_map = {
-            "驾驶证": {
-                "en": "Driver's License",
-                "ko": "운전면허증",
-                "ja": "運転免許証",
-                "zh": "驾驶证",
-                "es": "Licencia de Conducir",
-                "fr": "Permis de Conduire",
-                "de": "Führerschein",
-                "ru": "Водительское удостоверение"
-            },
-            "出生医学证明": {
-                "en": "Birth Certificate",
-                "ko": "출생증명서",
-                "ja": "出生証明書",
-                "zh": "出生医学证明",
-                "es": "Certificado de Nacimiento",
-                "fr": "Acte de Naissance",
-                "de": "Geburtsurkunde",
-                "ru": "Свидетельство о рождении"
-            },
-            "户口簿": {
-                "en": "Household Register",
-                "ko": "호적등본",
-                "ja": "戸籍謄本",
-                "zh": "户口簿",
-                "es": "Registro del Hogar",
-                "fr": "Registre de Ménage",
-                "de": "Haushaltsregister",
-                "ru": "Домовая книга"
-            },
-            "结婚证": {
-                "en": "Marriage Certificate",
-                "ko": "혼인증명서",
-                "ja": "結婚証明書",
-                "zh": "结婚证",
-                "es": "Certificado de Matrimonio",
-                "fr": "Certificat de Mariage",
-                "de": "Heiratsurkunde",
-                "ru": "Свидетельство о браке"
-            },
-            "亲属关系证明": {
-                "en": "Kinship Certificate",
-                "ko": "친족관계증명서",
-                "ja": "親族関係証明書",
-                "zh": "亲属关系证明",
-                "es": "Certificado de Parentesco",
-                "fr": "Certificat de Parenté",
-                "de": "Verwandtschaftsbescheinigung",
-                "ru": "Справка о родстве"
-            },
-            "无犯罪记录证明": {
-                "en": "Certificate of No Criminal Record",
-                "ko": "범죄경력증명서",
-                "ja": "犯罪経歴証明書",
-                "zh": "无犯罪记录证明",
-                "es": "Certificado de Antecedentes Penales",
-                "fr": "Certificat de Casier Judiciaire",
-                "de": "Führungszeugnis",
-                "ru": "Справка об отсутствии судимости"
-            },
-            "毕业证书": {
-                "en": "Diploma",
-                "ko": "졸업증명서",
-                "ja": "卒業証明書",
-                "zh": "毕业证书",
-                "es": "Diploma",
-                "fr": "Diplôme",
-                "de": "Diplom",
-                "ru": "Диплом"
-            },
-            "声明书": {
-                "en": "Declaration",
-                "ko": "선언서",
-                "ja": "宣言書",
-                "zh": "声明书",
-                "es": "Declaración",
-                "fr": "Déclaration",
-                "de": "Erklärung",
-                "ru": "Заявление"
-            }
-        }
-
-        # 获取对应的翻译
-        if doc_type_cn in type_map:
-            return type_map[doc_type_cn].get(target_lang, type_map[doc_type_cn]["en"])
-
-        # 默认返回 "Document" 的多语言版本
-        default_doc = {
-            "en": "Document",
-            "ko": "문서",
-            "ja": "書類",
-            "zh": "文档",
-            "es": "Documento",
-            "fr": "Document",
-            "de": "Dokument",
-            "ru": "Документ"
-        }
-        return default_doc.get(target_lang, "Document")
+        return document_title(doc_type_cn, target_lang)

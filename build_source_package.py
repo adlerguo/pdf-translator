@@ -4,14 +4,14 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent
 FILES = [
-    'README.md', 'DEPLOYMENT.md', 'config.example.json', '.gitignore',
+    'README.md', 'CHANGELOG.md', 'DEPLOYMENT.md', 'config.example.json', '.gitignore',
     'requirements.txt', 'requirements.lock.txt', 'check_environment.py',
     'build_source_package.py', 'start.sh', 'restart.sh',
-    'app_v2.py', 'model_client.py', 'task_storage.py', 'task_queue.py',
+    'app_v2.py', 'model_client.py', 'json_parser.py', 'document_language.py', 'task_storage.py', 'task_queue.py',
     'multi_page_processor.py', 'intelligent_extractor.py',
     'document_formatter.py', 'template_manager.py',
     'static/workbench.html', 'static/workbench.css', 'static/workbench.js',
-    'templates/README.md', 'tests/test_workbench.py', 'tests/test_frontend.cjs'
+    'templates/README.md', 'tests/test_workbench.py', 'tests/test_document_language.py', 'tests/test_json_and_retry.py', 'tests/test_frontend.cjs'
 ]
 
 def main():
