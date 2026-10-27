@@ -1,0 +1,11 @@
+# Direct dependencies matching the current running environment (2026-10-27).
+# Use requirements.lock.txt to reproduce the full observed dependency set.
+fastapi==0.156.4
+uvicorn==0.54.0
+python-multipart==0.0.32
+openai==3.35.1
+pillow==13.0.0
+pdf2image==1.17.0
+python-docx==1.2.0
+pydantic==2.14.1
+websockets==17.3

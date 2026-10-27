@@ -1,0 +1,42 @@
+{
+  "api": {
+    "base_url": "https://YOUR-OPENAI-COMPATIBLE-HOST/v1",
+    "api_key": "REPLACE_WITH_YOUR_API_KEY"
+  },
+  "models": {
+    "ocr": {
+      "name": "YOUR_VISION_MODEL_ID",
+      "display_name": "文字识别模型"
+    },
+    "translation": {
+      "name": "YOUR_TEXT_MODEL_ID",
+      "display_name": "字段提取与翻译模型"
+    },
+    "available": [
+      {
+        "id": "YOUR_VISION_MODEL_ID",
+        "name": "文字识别模型",
+        "use_for": [
+          "ocr"
+        ]
+      },
+      {
+        "id": "YOUR_TEXT_MODEL_ID",
+        "name": "字段提取与翻译模型",
+        "use_for": [
+          "translation"
+        ]
+      }
+    ]
+  },
+  "ocr": {
+    "system_prompt": "你是文档文字识别助手。请准确识别图片中的所有文字，保留原文顺序、段落、字段和表格结构。不要编造无法辨认的内容。"
+  },
+  "translation": {
+    "default_source_lang": "auto",
+    "default_target_lang": "en"
+  },
+  "queue": {
+    "max_concurrent_tasks": 2
+  }
+}

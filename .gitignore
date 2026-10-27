@@ -1,0 +1,19 @@
+# Private configuration and business material (does not untrack existing files)
+config.json
+.env
+.env.*
+!.env.example
+uploads/
+outputs/
+data/
+backups/
+logs/
+*.log
+templates/*.docx
+# Environments and generated artifacts
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+dist/
