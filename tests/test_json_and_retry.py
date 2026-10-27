@@ -174,6 +174,28 @@ class ExtractorRetryTest(unittest.IsolatedAsyncioTestCase):
 
 
 class GenericParserTest(unittest.IsolatedAsyncioTestCase):
+    async def test_generic_connection_retry_is_bounded(self):
+        for recover in (True, False):
+            processor=MultiPageProcessor('test-key','http://127.0.0.1:1')
+            def disconnected():
+                return openai.APIConnectionError(request=httpx.Request('POST','http://127.0.0.1:1'))
+            call=AsyncMock(side_effect=[disconnected(), response('{"fields":{"name":{"value":"sample"}}}') if recover else disconnected()])
+            processor.client.chat.completions.create=call
+            try:
+                with (patch('intelligent_extractor.asyncio.sleep',new_callable=AsyncMock) as sleep,
+                      self.assertLogs('ocr.processing',level='WARNING') as logs):
+                    if recover:
+                        result=await processor._extract_fields_generic('source','model')
+                        self.assertEqual(result['fields']['name']['value'],'sample')
+                    else:
+                        with self.assertRaisesRegex(RuntimeError,'字段提取失败'):
+                            await processor._extract_fields_generic('source','model')
+                self.assertEqual(call.await_count,2)
+                sleep.assert_awaited_once_with(2)
+                self.assertIn('extract_fields_generic','\n'.join(logs.output))
+            finally:
+                await processor.client.close();await processor.extractor.client.close()
+
     async def test_generic_extraction_uses_same_parser(self):
         processor=MultiPageProcessor('test-key','http://127.0.0.1:1')
         processor.client.chat.completions.create=AsyncMock(return_value=response('{"fields":{"note":{"value":"a\nb"}}}'))

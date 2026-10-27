@@ -254,15 +254,19 @@ OCR文本:
 只返回合法 JSON，不要注释或其他内容；字符串中的换行和制表符必须按 JSON 规则转义。"""
 
         try:
-            response = await self.client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "你是专业的信息提取专家。"},
-                    {"role": "user", "content": prompt}
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.1,
-                max_tokens=8192
+            response = await self.extractor._call_with_retry(
+                "extract_fields_generic",
+                lambda: self.client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "你是专业的信息提取专家。"},
+                        {"role": "user", "content": prompt}
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.1,
+                    max_tokens=8192
+                ),
+                model=model
             )
 
             metadata = log_response_metadata(response, "extract_fields_generic", model=model, max_tokens=8192)
